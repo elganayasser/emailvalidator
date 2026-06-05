@@ -6,3 +6,4 @@ Route::post('/validate',              [EmailValidationController::class, 'apiVal
 Route::post('/validate-bulk',         [EmailValidationController::class, 'apiValidateBulk']);
 Route::get('/job/{jobId}/status',     [EmailValidationController::class, 'jobStatus']);
 Route::get('/job/{jobId}/download',   [EmailValidationController::class, 'jobDownload']);
+Route::post('/validate-bulk-json', [EmailValidationController::class, 'apiValidateBulkJson']);

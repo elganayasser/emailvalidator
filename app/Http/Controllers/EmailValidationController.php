@@ -133,6 +133,51 @@ class EmailValidationController extends Controller
             'message'       => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
         ], 202);
     }
+    // ── API: bulk validate JSON array async ──────────────
+public function apiValidateBulkJson(Request $request)
+{
+    $request->validate([
+        'emails'   => 'required|array|min:1|max:200',
+        'emails.*' => 'string',
+    ]);
+
+    $emails = $request->input('emails');
+    $total  = count($emails);
+
+    // Build CSV from JSON array
+    $jobId   = Str::uuid()->toString();
+    $csvPath = storage_path('app/public/csv/input_' . $jobId . '.csv');
+
+    if (!file_exists(dirname($csvPath))) {
+        mkdir(dirname($csvPath), 0775, true);
+    }
+
+    // Write emails to CSV
+    $handle = fopen($csvPath, 'w');
+    fputcsv($handle, ['Email']); // header
+    foreach ($emails as $email) {
+        fputcsv($handle, [trim($email)]);
+    }
+    fclose($handle);
+
+    // Create job record
+    ValidationJob::create([
+        'job_id'           => $jobId,
+        'status'           => 'pending',
+        'total_emails'     => $total,
+        'processed_emails' => 0,
+    ]);
+
+    // Dispatch background job
+    ProcessBulkValidation::dispatch($jobId, $csvPath);
+
+    return response()->json([
+        'job_id'       => $jobId,
+        'status'       => 'pending',
+        'total_emails' => $total,
+        'message'      => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
+    ], 202);
+}
 
     // ── API: job status polling ───────────────────────────
     public function jobStatus(string $jobId)
