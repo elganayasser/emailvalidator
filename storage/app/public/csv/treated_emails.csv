@@ -1,0 +1,6 @@
+Email,Deliverability,Detail
+elganayasser@gmail.com,Valid,"SMTP confirmed reachable"
+imlilhobo@yahoo.com,"Accept All","Cached: domain accepts all addresses"
+elganayasser@m2partnersglobal,"Non Valid","Invalid email format"
+yasser.elgana@m2partnersglobal.com,"Non Valid","SMTP rejected (550) - 550 5.7.1 Service unavailable, Client host [196.217.99.92] blocked using Spamhaus. To request remova"
+simlilhobos@yahoo.com,"Accept All","Cached: domain accepts all addresses"
