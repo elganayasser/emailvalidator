@@ -41,7 +41,6 @@ class EmailValidationController extends Controller
         $csvFilePath = $csvFile->storeAs('csv', 'emails_input.csv', 'public');
         $outputPath  = storage_path('app/public/csv/treated_emails.csv');
 
-        // Ensure output directory exists
         if (!file_exists(dirname($outputPath))) {
             mkdir(dirname($outputPath), 0775, true);
         }
@@ -111,24 +110,45 @@ class EmailValidationController extends Controller
         usort($mxRecords, fn($a, $b) => $a['pri'] <=> $b['pri']);
         $smtpHost = $mxRecords[0]['target'];
 
-        // Check cached Accept All domains
-        $knownServer = EmailServer::where('smtpServer', 'LIKE', "%$smtpHost%")->first();
-        if ($knownServer && $knownServer->validationStatus === 'AcceptAll') {
-            return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all'];
+        // ── Step 1: Check domain cache ────────────────────
+        $cached = EmailServer::where('smtpServer', $smtpHost)->first();
+
+        if ($cached) {
+            if ($cached->validationStatus === 'AcceptAll') {
+                return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
+            }
+            if ($cached->validationStatus === 'Validable') {
+                return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
+            }
         }
 
-        $checker = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
-
-        // Decoy check — detect catch-all servers
-        $decoy     = 'xn0texist99zz@' . $domain;
+        // ── Step 2: Unknown domain — run decoy check ──────
+        $checker    = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
+        $decoy      = 'xn0texist99zz@' . $domain;
         $decoyReply = $checker->checkRecipients($decoy);
-       $decoyCode  = substr(trim($decoyReply), 0, 3);
+        $decoyCode  = substr(trim($decoyReply), 0, 3);
 
         if ($decoyCode === '250') {
+            EmailServer::firstOrCreate(
+                ['smtpServer' => $smtpHost],
+                ['validationStatus' => 'AcceptAll']
+            );
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
-        // Real SMTP check
+        // ── Step 3: Validable domain — save & real check ──
+        EmailServer::firstOrCreate(
+            ['smtpServer' => $smtpHost],
+            ['validationStatus' => 'Validable']
+        );
+
+        return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
+    }
+
+    // ── Real SMTP check ───────────────────────────────────
+    private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
+    {
+        $checker   = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
         $reply     = $checker->checkRecipients($email);
         $replyCode = substr(trim($reply), 0, 3);
 
@@ -136,6 +156,6 @@ class EmailValidationController extends Controller
             return ['email' => $email, 'status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
         }
 
-        return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ')'];
+        return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
     }
 }
