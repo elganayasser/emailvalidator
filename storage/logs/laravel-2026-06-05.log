@@ -1,0 +1,4 @@
+[2026-06-05 08:59:57] local.ERROR: Maximum execution time of 120 seconds exceeded {"exception":"[object] (Symfony\\Component\\ErrorHandler\\Error\\FatalError(code: 0): Maximum execution time of 120 seconds exceeded at /Users/yasser/Desktop/Clients/SPRichards/Phase 2 Delivrability/Version 3/emailvalidator/vendor/laravel/framework/src/Illuminate/Foundation/Console/ServeCommand.php:95)
+[stacktrace]
+#0 {main}
+"} 
