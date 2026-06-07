@@ -209,24 +209,26 @@ public function apiValidateBulkJson(Request $request)
         return response()->json($response);
     }
 
-    // ── API: download result CSV ──────────────────────────
-    public function jobDownload(string $jobId)
-    {
-        $job = ValidationJob::where('job_id', $jobId)->first();
+// ── API: download result CSV ──────────────────────────
+public function jobDownload(string $jobId)
+{
+    $job = ValidationJob::where('job_id', $jobId)->first();
 
-        if (!$job || $job->status !== 'completed') {
-            return response()->json(['error' => 'Result not ready'], 404);
-        }
-
-        $filePath = storage_path('app/public/' . $job->result_file);
-
-        if (!file_exists($filePath)) {
-            return response()->json(['error' => 'Result file not found'], 404);
-        }
-
-        return response()->download($filePath, 'validated_emails_' . $jobId . '.csv');
+    if (!$job || $job->status !== 'completed') {
+        return response()->json(['error' => 'Result not ready'], 404);
     }
 
+    $filePath = storage_path('app/public/' . $job->result_file);
+
+    if (!file_exists($filePath)) {
+        return response()->json(['error' => 'Result file not found'], 404);
+    }
+
+    return response()->download($filePath, 'validated_emails_' . $jobId . '.csv', [
+        'Content-Type'        => 'text/csv',
+        'Content-Disposition' => 'attachment; filename="validated_emails_' . $jobId . '.csv"',
+    ]);
+}
     // ── Core SMTP reachability engine ─────────────────────
     private function verifyEmail(string $email): array
     {
