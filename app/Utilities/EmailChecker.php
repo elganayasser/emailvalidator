@@ -34,14 +34,14 @@ class EmailChecker
             // Read banner
             $this->getResponse($smtp_server);
 
-            // EHLO
-            $ehloResponse = $this->sendCommand($smtp_server, 'EHLO hi');
+            // EHLO using our VPS FQDN — RFC compliant, resolves in DNS, matches PTR record
+            $ehloResponse = $this->sendCommand($smtp_server, 'EHLO srv1734398.hstgr.cloud');
 
             // Handle STARTTLS if required
             if (substr($ehloResponse, 0, 3) === '530') {
                 $this->sendCommand($smtp_server, 'STARTTLS');
                 stream_socket_enable_crypto($smtp_server, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-                $this->sendCommand($smtp_server, 'EHLO hi');
+                $this->sendCommand($smtp_server, 'EHLO srv1734398.hstgr.cloud');
             }
 
             // MAIL FROM
