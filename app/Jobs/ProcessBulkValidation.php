@@ -35,7 +35,7 @@ class ProcessBulkValidation implements ShouldQueue
         $validationJob->update(['status' => 'processing']);
 
         try {
-            $csv     = Reader::createFromPath($this->csvPath);
+            $csv        = Reader::createFromPath($this->csvPath);
             $outputPath = storage_path('app/public/csv/result_' . $this->jobId . '.csv');
 
             if (!file_exists(dirname($outputPath))) {
@@ -48,7 +48,7 @@ class ProcessBulkValidation implements ShouldQueue
             $smtpPort    = 25;
             $fromAddress = 'verifymyemailemaily@gmail.com';
             $processed   = 0;
-            $smtpChecks  = 0;
+            $smtpChecks  = 0; // counts SMTP + Microsoft checks for throttling
 
             foreach ($csv->getRecords() as $index => $record) {
                 if ($index === 0) continue;
@@ -56,7 +56,7 @@ class ProcessBulkValidation implements ShouldQueue
                 $email = isset($record[0]) ? trim($record[0]) : null;
                 if (!$email) continue;
 
-                // ── Invalid format — free, no SMTP ────────
+                // ── Invalid format — free, no check ───────
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Invalid email format']);
                     $processed++;
@@ -77,17 +77,28 @@ class ProcessBulkValidation implements ShouldQueue
                 usort($mxRecords, fn($a, $b) => $a['pri'] <=> $b['pri']);
                 $smtpHost = $mxRecords[0]['target'];
 
-                // ── Cache hit AcceptAll — free, no SMTP ───
+                // ── Cache hit AcceptAll ────────────────────
                 $cached = EmailServer::where('smtpServer', $smtpHost)->first();
 
                 if ($cached && $cached->validationStatus === 'AcceptAll') {
-                    $outputCsv->insertOne([$email, 'Accept All', 'Cached: domain accepts all addresses']);
+                    // Microsoft domain — throttle + API check
+                    if ($this->isMicrosoftDomain($smtpHost)) {
+                        if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
+                            sleep(60);
+                        }
+                        $result = $this->microsoftCheck($email);
+                        $smtpChecks++;
+                    } else {
+                        $result = ['status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
+                    }
+
+                    $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
                     $processed++;
                     $validationJob->update(['processed_emails' => $processed]);
                     continue;
                 }
 
-                // ── Throttle — 5 SMTP checks per minute ───
+                // ── Throttle — 5 checks per minute ────────
                 if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
                     sleep(60);
                 }
@@ -108,7 +119,17 @@ class ProcessBulkValidation implements ShouldQueue
                             ['smtpServer' => $smtpHost],
                             ['validationStatus' => 'AcceptAll']
                         );
-                        $result = ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
+
+                        // Microsoft domain — run API check
+                        if ($this->isMicrosoftDomain($smtpHost)) {
+                            if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
+                                sleep(60);
+                            }
+                            $result = $this->microsoftCheck($email);
+                            $smtpChecks++;
+                        } else {
+                            $result = ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
+                        }
                     } else {
                         EmailServer::firstOrCreate(
                             ['smtpServer' => $smtpHost],
@@ -137,6 +158,60 @@ class ProcessBulkValidation implements ShouldQueue
         }
     }
 
+    // ── Check if MX host is Microsoft hosted ──────────────
+    private function isMicrosoftDomain(string $smtpHost): bool
+    {
+        return str_contains(strtolower($smtpHost), 'outlook.com') ||
+               str_contains(strtolower($smtpHost), 'protection.outlook.com') ||
+               str_contains(strtolower($smtpHost), 'microsoft.com');
+    }
+
+    // ── Microsoft account existence check ─────────────────
+    private function microsoftCheck(string $email): array
+    {
+        try {
+            $payload = json_encode([
+                'Username'             => $email,
+                'isOtherIdpSupported'  => true,
+                'checkPhones'          => false,
+                'isRemoteNGCSupported' => true,
+                'isCookieBannerShown'  => false,
+                'isFidoSupported'      => true,
+                'originalRequest'      => '',
+                'flowToken'            => '',
+            ]);
+
+            $ch = curl_init('https://login.microsoftonline.com/common/GetCredentialType');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/json',
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+            $response = curl_exec($ch);
+            curl_close($ch);
+
+            $data = json_decode($response, true);
+
+            if (isset($data['IfExistsResult'])) {
+                if ($data['IfExistsResult'] === 0) {
+                    return ['status' => 'Valid', 'detail' => 'Microsoft account confirmed exists'];
+                } else {
+                    return ['status' => 'Non Valid', 'detail' => 'Microsoft account does not exist'];
+                }
+            }
+
+            return ['status' => 'Accept All', 'detail' => 'Microsoft check inconclusive'];
+
+        } catch (\Exception $e) {
+            return ['status' => 'Accept All', 'detail' => 'Microsoft check failed: ' . $e->getMessage()];
+        }
+    }
+
+    // ── Real SMTP check ───────────────────────────────────
     private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
     {
         $checker   = new EmailChecker($smtpHost, $smtpPort, $fromAddress);

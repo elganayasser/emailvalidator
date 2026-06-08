@@ -90,7 +90,7 @@ class EmailValidationController extends Controller
         return response()->json($this->verifyEmail($request->input('email')));
     }
 
-    // ── API: bulk validate async ──────────────────────────
+    // ── API: bulk validate async (CSV) ────────────────────
     public function apiValidateBulk(Request $request)
     {
         $request->validate(['file' => 'required|file|mimes:csv,txt|max:2048']);
@@ -105,7 +105,6 @@ class EmailValidationController extends Controller
             ], 422);
         }
 
-        // Store CSV for the job
         $jobId   = Str::uuid()->toString();
         $csvPath = storage_path('app/public/csv/input_' . $jobId . '.csv');
 
@@ -115,69 +114,64 @@ class EmailValidationController extends Controller
 
         copy($request->file('file')->getPathname(), $csvPath);
 
-        // Create job record
         ValidationJob::create([
-            'job_id'        => $jobId,
-            'status'        => 'pending',
-            'total_emails'  => $total,
+            'job_id'           => $jobId,
+            'status'           => 'pending',
+            'total_emails'     => $total,
             'processed_emails' => 0,
         ]);
 
-        // Dispatch background job
         ProcessBulkValidation::dispatch($jobId, $csvPath);
 
         return response()->json([
-            'job_id'        => $jobId,
-            'status'        => 'pending',
-            'total_emails'  => $total,
-            'message'       => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
+            'job_id'       => $jobId,
+            'status'       => 'pending',
+            'total_emails' => $total,
+            'message'      => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
         ], 202);
     }
-    // ── API: bulk validate JSON array async ──────────────
-public function apiValidateBulkJson(Request $request)
-{
-    $request->validate([
-        'emails'   => 'required|array|min:1|max:200',
-        'emails.*' => 'string',
-    ]);
 
-    $emails = $request->input('emails');
-    $total  = count($emails);
+    // ── API: bulk validate async (JSON) ───────────────────
+    public function apiValidateBulkJson(Request $request)
+    {
+        $request->validate([
+            'emails'   => 'required|array|min:1|max:200',
+            'emails.*' => 'string',
+        ]);
 
-    // Build CSV from JSON array
-    $jobId   = Str::uuid()->toString();
-    $csvPath = storage_path('app/public/csv/input_' . $jobId . '.csv');
+        $emails = $request->input('emails');
+        $total  = count($emails);
 
-    if (!file_exists(dirname($csvPath))) {
-        mkdir(dirname($csvPath), 0775, true);
+        $jobId   = Str::uuid()->toString();
+        $csvPath = storage_path('app/public/csv/input_' . $jobId . '.csv');
+
+        if (!file_exists(dirname($csvPath))) {
+            mkdir(dirname($csvPath), 0775, true);
+        }
+
+        $handle = fopen($csvPath, 'w');
+        fputcsv($handle, ['Email']);
+        foreach ($emails as $email) {
+            fputcsv($handle, [trim($email)]);
+        }
+        fclose($handle);
+
+        ValidationJob::create([
+            'job_id'           => $jobId,
+            'status'           => 'pending',
+            'total_emails'     => $total,
+            'processed_emails' => 0,
+        ]);
+
+        ProcessBulkValidation::dispatch($jobId, $csvPath);
+
+        return response()->json([
+            'job_id'       => $jobId,
+            'status'       => 'pending',
+            'total_emails' => $total,
+            'message'      => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
+        ], 202);
     }
-
-    // Write emails to CSV
-    $handle = fopen($csvPath, 'w');
-    fputcsv($handle, ['Email']); // header
-    foreach ($emails as $email) {
-        fputcsv($handle, [trim($email)]);
-    }
-    fclose($handle);
-
-    // Create job record
-    ValidationJob::create([
-        'job_id'           => $jobId,
-        'status'           => 'pending',
-        'total_emails'     => $total,
-        'processed_emails' => 0,
-    ]);
-
-    // Dispatch background job
-    ProcessBulkValidation::dispatch($jobId, $csvPath);
-
-    return response()->json([
-        'job_id'       => $jobId,
-        'status'       => 'pending',
-        'total_emails' => $total,
-        'message'      => 'Validation started. Poll /api/job/' . $jobId . '/status for updates.',
-    ], 202);
-}
 
     // ── API: job status polling ───────────────────────────
     public function jobStatus(string $jobId)
@@ -189,11 +183,11 @@ public function apiValidateBulkJson(Request $request)
         }
 
         $response = [
-            'job_id'            => $job->job_id,
-            'status'            => $job->status,
-            'total_emails'      => $job->total_emails,
-            'processed_emails'  => $job->processed_emails,
-            'progress'          => $job->total_emails > 0
+            'job_id'           => $job->job_id,
+            'status'           => $job->status,
+            'total_emails'     => $job->total_emails,
+            'processed_emails' => $job->processed_emails,
+            'progress'         => $job->total_emails > 0
                                     ? round(($job->processed_emails / $job->total_emails) * 100, 1) . '%'
                                     : '0%',
         ];
@@ -209,26 +203,27 @@ public function apiValidateBulkJson(Request $request)
         return response()->json($response);
     }
 
-// ── API: download result CSV ──────────────────────────
-public function jobDownload(string $jobId)
-{
-    $job = ValidationJob::where('job_id', $jobId)->first();
+    // ── API: download result CSV ──────────────────────────
+    public function jobDownload(string $jobId)
+    {
+        $job = ValidationJob::where('job_id', $jobId)->first();
 
-    if (!$job || $job->status !== 'completed') {
-        return response()->json(['error' => 'Result not ready'], 404);
+        if (!$job || $job->status !== 'completed') {
+            return response()->json(['error' => 'Result not ready'], 404);
+        }
+
+        $filePath = storage_path('app/public/' . $job->result_file);
+
+        if (!file_exists($filePath)) {
+            return response()->json(['error' => 'Result file not found'], 404);
+        }
+
+        return response()->download($filePath, 'validated_emails_' . $jobId . '.csv', [
+            'Content-Type'        => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="validated_emails_' . $jobId . '.csv"',
+        ]);
     }
 
-    $filePath = storage_path('app/public/' . $job->result_file);
-
-    if (!file_exists($filePath)) {
-        return response()->json(['error' => 'Result file not found'], 404);
-    }
-
-    return response()->download($filePath, 'validated_emails_' . $jobId . '.csv', [
-        'Content-Type'        => 'text/csv',
-        'Content-Disposition' => 'attachment; filename="validated_emails_' . $jobId . '.csv"',
-    ]);
-}
     // ── Core SMTP reachability engine ─────────────────────
     private function verifyEmail(string $email): array
     {
@@ -254,6 +249,9 @@ public function jobDownload(string $jobId)
 
         if ($cached) {
             if ($cached->validationStatus === 'AcceptAll') {
+                if ($this->isMicrosoftDomain($smtpHost)) {
+                    return $this->microsoftCheck($email);
+                }
                 return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
             }
             if ($cached->validationStatus === 'Validable') {
@@ -272,6 +270,9 @@ public function jobDownload(string $jobId)
                 ['smtpServer' => $smtpHost],
                 ['validationStatus' => 'AcceptAll']
             );
+            if ($this->isMicrosoftDomain($smtpHost)) {
+                return $this->microsoftCheck($email);
+            }
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
@@ -282,6 +283,59 @@ public function jobDownload(string $jobId)
         );
 
         return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
+    }
+
+    // ── Check if MX host is Microsoft hosted ──────────────
+    private function isMicrosoftDomain(string $smtpHost): bool
+    {
+        return str_contains(strtolower($smtpHost), 'outlook.com') ||
+               str_contains(strtolower($smtpHost), 'protection.outlook.com') ||
+               str_contains(strtolower($smtpHost), 'microsoft.com');
+    }
+
+    // ── Microsoft account existence check ─────────────────
+    private function microsoftCheck(string $email): array
+    {
+        try {
+            $payload = json_encode([
+                'Username'             => $email,
+                'isOtherIdpSupported'  => true,
+                'checkPhones'          => false,
+                'isRemoteNGCSupported' => true,
+                'isCookieBannerShown'  => false,
+                'isFidoSupported'      => true,
+                'originalRequest'      => '',
+                'flowToken'            => '',
+            ]);
+
+            $ch = curl_init('https://login.microsoftonline.com/common/GetCredentialType');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/json',
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+            $response = curl_exec($ch);
+            curl_close($ch);
+
+            $data = json_decode($response, true);
+
+            if (isset($data['IfExistsResult'])) {
+                if ($data['IfExistsResult'] === 0) {
+                    return ['email' => $email, 'status' => 'Valid', 'detail' => 'Microsoft account confirmed exists'];
+                } else {
+                    return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Microsoft account does not exist'];
+                }
+            }
+
+            return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Microsoft check inconclusive'];
+
+        } catch (\Exception $e) {
+            return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Microsoft check failed: ' . $e->getMessage()];
+        }
     }
 
     // ── Real SMTP check ───────────────────────────────────
