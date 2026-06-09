@@ -50,6 +50,7 @@ class ProcessBulkValidation implements ShouldQueue
             $fromAddress = 'verifymyemailemaily@gmail.com';
             $processed   = 0;
             $smtpChecks  = 0;
+            $retryQueue  = []; // ── Collect temporary failures for retry ──
 
             foreach ($csv->getRecords() as $index => $record) {
                 if ($index === 0) continue;
@@ -65,7 +66,7 @@ class ProcessBulkValidation implements ShouldQueue
                     continue;
                 }
 
-              // ── Disposable email check ────────────────
+                // ── Disposable email check ────────────────
                 $disposableFilter = new DisposableEmailFilter();
                 if ($disposableFilter->isDisposableEmailAddress($email)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Disposable email address not allowed']);
@@ -159,9 +160,35 @@ class ProcessBulkValidation implements ShouldQueue
                     }
                 }
 
+                // ── Temporary failure — queue for retry ───
+                if ($result['status'] === 'Retry') {
+                    $retryQueue[] = ['email' => $email, 'smtpHost' => $smtpHost];
+                    $processed++;
+                    $validationJob->update(['processed_emails' => $processed]);
+                    continue;
+                }
+
                 $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
                 $processed++;
                 $validationJob->update(['processed_emails' => $processed]);
+            }
+
+            // ── Retry pass — wait 300s then retry temp failures ──
+            if (!empty($retryQueue)) {
+                sleep(300);
+
+                foreach ($retryQueue as $item) {
+                    $result = $this->smtpCheck($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
+
+                    // ── Still failing after retry → Accept All ─
+                    if ($result['status'] === 'Retry') {
+                        $result = ['status' => 'Accept All', 'detail' => 'Temporarily unconfirmable — treated as Accept All'];
+                    }
+
+                    $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
+                    $processed++;
+                    $validationJob->update(['processed_emails' => $processed]);
+                }
             }
 
             $validationJob->update([
@@ -321,9 +348,9 @@ class ProcessBulkValidation implements ShouldQueue
             return ['status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
         }
 
-          // ── Temporary failures — server busy, not invalid ──
+        // ── Temporary failures — queue for retry, not invalid ──
         if (in_array($replyCode, ['421', '450', '451', '452'])) {
-            return ['status' => 'Unverifiable', 'detail' => 'Temporary server issue - retry later (' . $replyCode . ')'];
+            return ['status' => 'Retry', 'detail' => 'Temporary server issue (' . $replyCode . ')'];
         }
 
         return ['status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
