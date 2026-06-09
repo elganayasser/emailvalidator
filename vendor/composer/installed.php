@@ -1,15 +1,24 @@
 <?php return array(
     'root' => array(
         'name' => 'laravel/laravel',
-        'pretty_version' => '1.0.0+no-version-set',
-        'version' => '1.0.0.0',
-        'reference' => null,
+        'pretty_version' => 'dev-main',
+        'version' => 'dev-main',
+        'reference' => 'effeabb4f15bd828672973b21a46436c0d3e1aa8',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
         'dev' => true,
     ),
     'versions' => array(
+        'beeyev/disposable-email-filter-php' => array(
+            'pretty_version' => 'v1.3.228',
+            'version' => '1.3.228.0',
+            'reference' => 'e19ce06c9da2bebf32b1799f593b21befb6d2419',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../beeyev/disposable-email-filter-php',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
         'beyondcode/laravel-dump-server' => array(
             'pretty_version' => '1.9.0',
             'version' => '1.9.0.0',
@@ -434,9 +443,9 @@
             'dev_requirement' => false,
         ),
         'laravel/laravel' => array(
-            'pretty_version' => '1.0.0+no-version-set',
-            'version' => '1.0.0.0',
-            'reference' => null,
+            'pretty_version' => 'dev-main',
+            'version' => 'dev-main',
+            'reference' => 'effeabb4f15bd828672973b21a46436c0d3e1aa8',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),

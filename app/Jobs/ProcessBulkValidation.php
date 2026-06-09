@@ -12,6 +12,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use League\Csv\Reader;
 use League\Csv\Writer;
+use Beeyev\DisposableEmailFilter\DisposableEmailFilter;
 
 class ProcessBulkValidation implements ShouldQueue
 {
@@ -59,6 +60,15 @@ class ProcessBulkValidation implements ShouldQueue
                 // ── Invalid format — free, no check ───────
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Invalid email format']);
+                    $processed++;
+                    $validationJob->update(['processed_emails' => $processed]);
+                    continue;
+                }
+
+              // ── Disposable email check ────────────────
+                $disposableFilter = new DisposableEmailFilter();
+                if ($disposableFilter->isDisposableEmailAddress($email)) {
+                    $outputCsv->insertOne([$email, 'Non Valid', 'Disposable email address not allowed']);
                     $processed++;
                     $validationJob->update(['processed_emails' => $processed]);
                     continue;

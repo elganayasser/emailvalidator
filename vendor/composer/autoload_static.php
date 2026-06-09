@@ -193,6 +193,7 @@ class ComposerStaticInit38c1643e52bf5fd0866dfa0ed52dc834
         array (
             'Brick\\Math\\' => 11,
             'BeyondCode\\DumpServer\\' => 22,
+            'Beeyev\\DisposableEmailFilter\\' => 29,
         ),
         'A' =>
         array (
@@ -588,6 +589,10 @@ class ComposerStaticInit38c1643e52bf5fd0866dfa0ed52dc834
         array (
             0 => __DIR__ . '/..' . '/beyondcode/laravel-dump-server/src',
         ),
+        'Beeyev\\DisposableEmailFilter\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src',
+        ),
         'App\\' =>
         array (
             0 => __DIR__ . '/../..' . '/app',
@@ -631,8 +636,10 @@ class ComposerStaticInit38c1643e52bf5fd0866dfa0ed52dc834
         'App\\Http\\Middleware\\RedirectIfAuthenticated' => __DIR__ . '/../..' . '/app/Http/Middleware/RedirectIfAuthenticated.php',
         'App\\Http\\Middleware\\TrimStrings' => __DIR__ . '/../..' . '/app/Http/Middleware/TrimStrings.php',
         'App\\Http\\Middleware\\VerifyCsrfToken' => __DIR__ . '/../..' . '/app/Http/Middleware/VerifyCsrfToken.php',
+        'App\\Jobs\\ProcessBulkValidation' => __DIR__ . '/../..' . '/app/Jobs/ProcessBulkValidation.php',
         'App\\Models\\EmailServer' => __DIR__ . '/../..' . '/app/Models/EmailServer.php',
         'App\\Models\\User' => __DIR__ . '/../..' . '/app/Models/User.php',
+        'App\\Models\\ValidationJob' => __DIR__ . '/../..' . '/app/Models/ValidationJob.php',
         'App\\Providers\\AppServiceProvider' => __DIR__ . '/../..' . '/app/Providers/AppServiceProvider.php',
         'App\\Providers\\AuthServiceProvider' => __DIR__ . '/../..' . '/app/Providers/AuthServiceProvider.php',
         'App\\Providers\\BroadcastServiceProvider' => __DIR__ . '/../..' . '/app/Providers/BroadcastServiceProvider.php',
@@ -640,6 +647,16 @@ class ComposerStaticInit38c1643e52bf5fd0866dfa0ed52dc834
         'App\\Providers\\RouteServiceProvider' => __DIR__ . '/../..' . '/app/Providers/RouteServiceProvider.php',
         'App\\Utilities\\EmailChecker' => __DIR__ . '/../..' . '/app/Utilities/EmailChecker.php',
         'Attribute' => __DIR__ . '/..' . '/symfony/polyfill-php80/Resources/stubs/Attribute.php',
+        'Beeyev\\DisposableEmailFilter\\Adapters\\Laravel\\DisposableEmailFilterServiceProvider' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Adapters/Laravel/DisposableEmailFilterServiceProvider.php',
+        'Beeyev\\DisposableEmailFilter\\Adapters\\Laravel\\Facades\\DisposableEmail' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Adapters/Laravel/Facades/DisposableEmail.php',
+        'Beeyev\\DisposableEmailFilter\\Adapters\\Laravel\\ValidationRules\\NotDisposableEmail' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Adapters/Laravel/ValidationRules/NotDisposableEmail.php',
+        'Beeyev\\DisposableEmailFilter\\CustomEmailDomainFilter\\CustomEmailDomainFilter' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/CustomEmailDomainFilter/CustomEmailDomainFilter.php',
+        'Beeyev\\DisposableEmailFilter\\CustomEmailDomainFilter\\CustomEmailDomainFilterInterface' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/CustomEmailDomainFilter/CustomEmailDomainFilterInterface.php',
+        'Beeyev\\DisposableEmailFilter\\DisposableEmailDomains\\DisposableEmailDomains' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/DisposableEmailDomains/DisposableEmailDomains.php',
+        'Beeyev\\DisposableEmailFilter\\DisposableEmailFilter' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/DisposableEmailFilter.php',
+        'Beeyev\\DisposableEmailFilter\\Exceptions\\DisposableEmailFilterException' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Exceptions/DisposableEmailFilterException.php',
+        'Beeyev\\DisposableEmailFilter\\Exceptions\\InvalidEmailAddressException' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Exceptions/InvalidEmailAddressException.php',
+        'Beeyev\\DisposableEmailFilter\\Support\\Validator' => __DIR__ . '/..' . '/beeyev/disposable-email-filter-php/src/Support/Validator.php',
         'BeyondCode\\DumpServer\\DumpServerCommand' => __DIR__ . '/..' . '/beyondcode/laravel-dump-server/src/DumpServerCommand.php',
         'BeyondCode\\DumpServer\\DumpServerServiceProvider' => __DIR__ . '/..' . '/beyondcode/laravel-dump-server/src/DumpServerServiceProvider.php',
         'BeyondCode\\DumpServer\\Dumper' => __DIR__ . '/..' . '/beyondcode/laravel-dump-server/src/Dumper.php',

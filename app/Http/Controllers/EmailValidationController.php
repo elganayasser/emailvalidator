@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use League\Csv\Reader;
 use League\Csv\Writer;
+use Beeyev\DisposableEmailFilter\DisposableEmailFilter;
 
 class EmailValidationController extends Controller
 {
@@ -232,6 +233,12 @@ class EmailValidationController extends Controller
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Invalid format'];
+        }
+
+        // ── Disposable email check ────────────────────────────
+        $disposableFilter = new DisposableEmailFilter();
+        if ($disposableFilter->isDisposableEmailAddress($email)) {
+            return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Disposable email address not allowed'];
         }
 
         [, $domain] = explode('@', $email, 2);

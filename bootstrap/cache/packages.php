@@ -1,4 +1,15 @@
 <?php return array (
+  'beeyev/disposable-email-filter-php' => 
+  array (
+    'aliases' => 
+    array (
+      'DisposableEmail' => 'Beeyev\\DisposableEmailFilter\\Adapters\\Laravel\\Facades\\DisposableEmail',
+    ),
+    'providers' => 
+    array (
+      0 => 'Beeyev\\DisposableEmailFilter\\Adapters\\Laravel\\DisposableEmailFilterServiceProvider',
+    ),
+  ),
   'beyondcode/laravel-dump-server' => 
   array (
     'providers' => 

@@ -9,6 +9,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2.12",
+        "beeyev/disposable-email-filter-php": "^1.3",
         "doctrine/dbal": "^3.0",
         "laracasts/utilities": "^3.2",
         "laravel/cashier": "^14.14.0",

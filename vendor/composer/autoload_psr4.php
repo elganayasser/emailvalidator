@@ -102,5 +102,6 @@ return array(
     'Carbon\\' => array($vendorDir . '/nesbot/carbon/src/Carbon'),
     'Brick\\Math\\' => array($vendorDir . '/brick/math/src'),
     'BeyondCode\\DumpServer\\' => array($vendorDir . '/beyondcode/laravel-dump-server/src'),
+    'Beeyev\\DisposableEmailFilter\\' => array($vendorDir . '/beeyev/disposable-email-filter-php/src'),
     'App\\' => array($baseDir . '/app'),
 );
