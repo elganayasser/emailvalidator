@@ -252,6 +252,9 @@ class EmailValidationController extends Controller
                 if ($this->isMicrosoftDomain($smtpHost)) {
                     return $this->microsoftCheck($email);
                 }
+                if ($this->isYahooDomain($smtpHost)) {
+                    return $this->yahooCheck($email);
+                }
                 return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
             }
             if ($cached->validationStatus === 'Validable') {
@@ -273,6 +276,9 @@ class EmailValidationController extends Controller
             if ($this->isMicrosoftDomain($smtpHost)) {
                 return $this->microsoftCheck($email);
             }
+            if ($this->isYahooDomain($smtpHost)) {
+                return $this->yahooCheck($email);
+            }
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
@@ -291,6 +297,13 @@ class EmailValidationController extends Controller
         return str_contains(strtolower($smtpHost), 'outlook.com') ||
                str_contains(strtolower($smtpHost), 'protection.outlook.com') ||
                str_contains(strtolower($smtpHost), 'microsoft.com');
+    }
+
+    // ── Check if MX host is Yahoo hosted ──────────────────
+    private function isYahooDomain(string $smtpHost): bool
+    {
+        return str_contains(strtolower($smtpHost), 'yahoo') ||
+               str_contains(strtolower($smtpHost), 'yahoodns');
     }
 
     // ── Microsoft account existence check ─────────────────
@@ -335,6 +348,79 @@ class EmailValidationController extends Controller
 
         } catch (\Exception $e) {
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Microsoft check failed: ' . $e->getMessage()];
+        }
+    }
+
+    // ── Yahoo account existence check ─────────────────────
+    private function yahooCheck(string $email): array
+    {
+        try {
+            $cookieFile = tempnam(sys_get_temp_dir(), 'yahoo_cookie_');
+
+            // ── Step 1: Get session tokens ─────────────
+            $ch = curl_init('https://login.yahoo.com/');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            $html = curl_exec($ch);
+            curl_close($ch);
+
+            // ── Step 2: Extract tokens ─────────────────
+            preg_match('/acrumb[^,]*?([A-Za-z0-9+\/=]{8})/', $html, $acrumbMatch);
+            preg_match('/crumb\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $crumbMatch);
+            preg_match('/sessionIndex\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $sessionMatch);
+
+            $acrumb       = $acrumbMatch[1] ?? null;
+            $crumb        = $crumbMatch[1] ?? null;
+            $sessionIndex = $sessionMatch[1] ?? 'QQ--';
+
+            if (!$acrumb || !$crumb) {
+                return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Yahoo session extraction failed'];
+            }
+
+            // ── Step 3: Validate email ─────────────────
+            $ch = curl_init('https://login.yahoo.com/validate');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+                'username'     => $email,
+                'acrumb'       => $acrumb,
+                'crumb'        => $crumb,
+                'sessionIndex' => $sessionIndex,
+                'persistent'   => 'y',
+            ]));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+                'Content-Type: application/x-www-form-urlencoded',
+                'X-Requested-With: XMLHttpRequest',
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            $response = curl_exec($ch);
+            curl_close($ch);
+
+            @unlink($cookieFile);
+
+            $data = json_decode($response, true);
+
+            if (isset($data['redirect'])) {
+                return ['email' => $email, 'status' => 'Valid', 'detail' => 'Yahoo account confirmed exists'];
+            }
+
+            if (isset($data['error'])) {
+                return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Yahoo account does not exist'];
+            }
+
+            return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Yahoo check inconclusive'];
+
+        } catch (\Exception $e) {
+            return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Yahoo check failed: ' . $e->getMessage()];
         }
     }
 
