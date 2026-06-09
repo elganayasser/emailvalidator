@@ -442,6 +442,11 @@ class EmailValidationController extends Controller
             return ['email' => $email, 'status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
         }
 
+          // ── Temporary failures — server busy, not invalid ──
+        if (in_array($replyCode, ['421', '450', '451', '452'])) {
+            return ['email' => $email, 'status' => 'Unverifiable', 'detail' => 'Temporary server issue - retry later (' . $replyCode . ')'];
+        }
+
         return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
     }
 }
