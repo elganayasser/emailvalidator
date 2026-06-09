@@ -20,10 +20,19 @@ class EmailChecker
 
     public function checkRecipients($recipientAddress)
     {
-        $timeout = 10;
+        $timeout = 30;
 
         try {
-            $smtp_server = fsockopen($this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
+            // Force IPv4 — resolve hostname to IPv4 before connecting
+            $ipv4 = null;
+            $dnsRecords = dns_get_record($this->smtpHost, DNS_A);
+            if (!empty($dnsRecords)) {
+                $ipv4 = $dnsRecords[0]['ip'];
+            }
+            $connectHost = $ipv4 ?? $this->smtpHost;
+
+            $smtp_server = fsockopen($connectHost, $this->smtpPort, $errno, $errstr, $timeout);
+          
 
             if (!$smtp_server) {
                 return "Connection failed: $errstr ($errno)";
