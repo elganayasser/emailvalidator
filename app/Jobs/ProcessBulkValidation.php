@@ -49,8 +49,11 @@ class ProcessBulkValidation implements ShouldQueue
             $smtpPort    = 25;
             $fromAddress = 'verifymyemailemaily@gmail.com';
             $processed   = 0;
-            $smtpChecks  = 0;
             $retryQueue  = []; // ── Collect temporary failures for retry ──
+
+            // ── Per-domain throttle trackers ──────────────
+            $domainCheckCount = []; // how many checks per MX host
+            $domainLastCheck  = []; // timestamp of last check per MX host
 
             foreach ($csv->getRecords() as $index => $record) {
                 if ($index === 0) continue;
@@ -58,7 +61,7 @@ class ProcessBulkValidation implements ShouldQueue
                 $email = isset($record[0]) ? trim($record[0]) : null;
                 if (!$email) continue;
 
-                // ── Invalid format — free, no check ───────
+                // ── Invalid format ────────────────────────
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Invalid email format']);
                     $processed++;
@@ -88,25 +91,32 @@ class ProcessBulkValidation implements ShouldQueue
                 usort($mxRecords, fn($a, $b) => $a['pri'] <=> $b['pri']);
                 $smtpHost = $mxRecords[0]['target'];
 
+                // ── Per-domain throttle ───────────────────
+                // Only sleep when we've hit the same MX host 5+ times
+                $count    = $domainCheckCount[$smtpHost] ?? 0;
+                $lastTime = $domainLastCheck[$smtpHost] ?? 0;
+
+                if ($count > 0 && $count % 5 === 0) {
+                    $elapsed = time() - $lastTime;
+                    if ($elapsed < 60) {
+                        sleep(60 - $elapsed); // only sleep remaining seconds
+                    }
+                }
+
                 // ── Cache hit AcceptAll ────────────────────
                 $cached = EmailServer::where('smtpServer', $smtpHost)->first();
 
                 if ($cached && $cached->validationStatus === 'AcceptAll') {
                     if ($this->isMicrosoftDomain($smtpHost)) {
-                        if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
-                            sleep(60);
-                        }
                         $result = $this->microsoftCheck($email);
-                        $smtpChecks++;
                     } elseif ($this->isYahooDomain($smtpHost)) {
-                        if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
-                            sleep(60);
-                        }
                         $result = $this->yahooCheck($email);
-                        $smtpChecks++;
                     } else {
                         $result = ['status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
                     }
+
+                    $domainCheckCount[$smtpHost] = $count + 1;
+                    $domainLastCheck[$smtpHost]  = time();
 
                     $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
                     $processed++;
@@ -114,20 +124,21 @@ class ProcessBulkValidation implements ShouldQueue
                     continue;
                 }
 
-                // ── Throttle — 5 checks per minute ────────
-                if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
-                    sleep(60);
-                }
-
                 if ($cached && $cached->validationStatus === 'Validable') {
                     $result = $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
-                    $smtpChecks++;
+
+                    $domainCheckCount[$smtpHost] = $count + 1;
+                    $domainLastCheck[$smtpHost]  = time();
+
                 } else {
+                    // ── Unknown domain — run decoy check ──
                     $checker    = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
                     $decoy      = 'xn0texist99zz@' . $domain;
                     $decoyReply = $checker->checkRecipients($decoy);
                     $decoyCode  = substr(trim($decoyReply), 0, 3);
-                    $smtpChecks++;
+
+                    $domainCheckCount[$smtpHost] = $count + 1;
+                    $domainLastCheck[$smtpHost]  = time();
 
                     if ($decoyCode === '250') {
                         EmailServer::firstOrCreate(
@@ -136,17 +147,9 @@ class ProcessBulkValidation implements ShouldQueue
                         );
 
                         if ($this->isMicrosoftDomain($smtpHost)) {
-                            if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
-                                sleep(60);
-                            }
                             $result = $this->microsoftCheck($email);
-                            $smtpChecks++;
                         } elseif ($this->isYahooDomain($smtpHost)) {
-                            if ($smtpChecks > 0 && $smtpChecks % 5 === 0) {
-                                sleep(60);
-                            }
                             $result = $this->yahooCheck($email);
-                            $smtpChecks++;
                         } else {
                             $result = ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
                         }
@@ -156,7 +159,9 @@ class ProcessBulkValidation implements ShouldQueue
                             ['validationStatus' => 'Validable']
                         );
                         $result = $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
-                        $smtpChecks++;
+
+                        $domainCheckCount[$smtpHost] = ($domainCheckCount[$smtpHost] ?? 0) + 1;
+                        $domainLastCheck[$smtpHost]  = time();
                     }
                 }
 
