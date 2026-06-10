@@ -4,7 +4,9 @@ namespace App\Utilities;
 
 class EmailChecker
 {
-    const CRLF = "\r\n";
+    const CRLF        = "\r\n";
+    const EHLO_DOMAIN = 'mail.wizemailchecker.com';
+
     protected $smtpHost;
     protected $smtpPort;
     protected $fromAddress;
@@ -20,11 +22,10 @@ class EmailChecker
 
     public function checkRecipients($recipientAddress)
     {
-        $timeout = 20;
+        $timeout = 30;
 
         try {
-
-           $smtp_server = fsockopen($this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
+            $smtp_server = fsockopen($this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
 
             if (!$smtp_server) {
                 return "Connection failed: $errstr ($errno)";
@@ -35,23 +36,23 @@ class EmailChecker
             // Read banner
             $this->getResponse($smtp_server);
 
-            // EHLO using our VPS FQDN — RFC compliant, resolves in DNS, matches PTR record
-            $ehloResponse = $this->sendCommand($smtp_server, 'EHLO srv1734398.hstgr.cloud');
+            // EHLO using PTR-matched FQDN — RFC compliant
+            $ehloResponse = $this->sendCommand($smtp_server, 'EHLO ' . self::EHLO_DOMAIN);
 
             // Handle STARTTLS if required
             if (substr($ehloResponse, 0, 3) === '530') {
                 $this->sendCommand($smtp_server, 'STARTTLS');
                 stream_socket_enable_crypto($smtp_server, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-                $this->sendCommand($smtp_server, 'EHLO srv1734398.hstgr.cloud');
+                $this->sendCommand($smtp_server, 'EHLO ' . self::EHLO_DOMAIN);
             }
 
-            // MAIL FROM
-            $this->sendCommand($smtp_server, 'MAIL FROM: <' . $this->fromAddress . '>');
+            // MAIL FROM — our domain, RFC compliant, matches PTR
+            $this->sendCommand($smtp_server, 'MAIL FROM: <verify@wizemailchecker.com>');
 
             // RCPT TO — the key verification step
             $rcptResponse = $this->sendCommand($smtp_server, 'RCPT TO: <' . $recipientAddress . '>');
 
-            // QUIT
+            // QUIT cleanly
             $this->sendCommand($smtp_server, 'QUIT');
             fclose($smtp_server);
 

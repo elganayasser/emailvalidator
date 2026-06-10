@@ -47,7 +47,7 @@ class ProcessBulkValidation implements ShouldQueue
             $outputCsv->insertOne(['Email', 'Deliverability', 'Detail']);
 
             $smtpPort    = 25;
-            $fromAddress = 'verifymyemailemaily@gmail.com';
+            $fromAddress = 'verify@wizemailchecker.com';
             $processed   = 0;
             $retryQueue  = []; // ── Collect temporary failures for retry ──
 
@@ -92,18 +92,17 @@ class ProcessBulkValidation implements ShouldQueue
                 $smtpHost = $mxRecords[0]['target'];
 
                 // ── Per-domain throttle ───────────────────
-                // Only sleep when we've hit the same MX host 5+ times
                 $count    = $domainCheckCount[$smtpHost] ?? 0;
                 $lastTime = $domainLastCheck[$smtpHost] ?? 0;
 
                 if ($count > 0 && $count % 10 === 0) {
                     $elapsed = time() - $lastTime;
                     if ($elapsed < 60) {
-                        sleep(60 - $elapsed); // only sleep remaining seconds
+                        sleep(60 - $elapsed);
                     }
                 }
 
-                // ── Cache hit AcceptAll ────────────────────
+                // ── Cache hit AcceptAll ───────────────────
                 $cached = EmailServer::where('smtpServer', $smtpHost)->first();
 
                 if ($cached && $cached->validationStatus === 'AcceptAll') {
@@ -124,44 +123,66 @@ class ProcessBulkValidation implements ShouldQueue
                     continue;
                 }
 
+                // ── Cache hit Validable ───────────────────
                 if ($cached && $cached->validationStatus === 'Validable') {
-                    $result = $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
-
-                    $domainCheckCount[$smtpHost] = $count + 1;
-                    $domainLastCheck[$smtpHost]  = time();
-
-                } else {
-                    // ── Unknown domain — run decoy check ──
-                    $checker    = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
-                    $decoy      = 'xn0texist99zz@' . $domain;
-                    $decoyReply = $checker->checkRecipients($decoy);
-                    $decoyCode  = substr(trim($decoyReply), 0, 3);
-
-                    $domainCheckCount[$smtpHost] = $count + 1;
-                    $domainLastCheck[$smtpHost]  = time();
-
-                    if ($decoyCode === '250') {
-                        EmailServer::firstOrCreate(
-                            ['smtpServer' => $smtpHost],
-                            ['validationStatus' => 'AcceptAll']
-                        );
-
-                        if ($this->isMicrosoftDomain($smtpHost)) {
-                            $result = $this->microsoftCheck($email);
-                        } elseif ($this->isYahooDomain($smtpHost)) {
-                            $result = $this->yahooCheck($email);
-                        } else {
-                            $result = ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
-                        }
+                    if ($this->isMicrosoftDomain($smtpHost)) {
+                        $result = $this->microsoftCheck($email);
+                    } elseif ($this->isYahooDomain($smtpHost)) {
+                        $result = $this->yahooCheck($email);
                     } else {
-                        EmailServer::firstOrCreate(
-                            ['smtpServer' => $smtpHost],
-                            ['validationStatus' => 'Validable']
-                        );
                         $result = $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
+                    }
 
-                        $domainCheckCount[$smtpHost] = ($domainCheckCount[$smtpHost] ?? 0) + 1;
-                        $domainLastCheck[$smtpHost]  = time();
+                    $domainCheckCount[$smtpHost] = $count + 1;
+                    $domainLastCheck[$smtpHost]  = time();
+
+                    if ($result['status'] === 'Retry') {
+                        $retryQueue[] = ['email' => $email, 'smtpHost' => $smtpHost];
+                        $processed++;
+                        $validationJob->update(['processed_emails' => $processed]);
+                        continue;
+                    }
+
+                    $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
+                    $processed++;
+                    $validationJob->update(['processed_emails' => $processed]);
+                    continue;
+                }
+
+                // ── Unknown domain — run decoy check ──────
+                $checker    = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
+                $decoy      = 'xn0texist99zz@' . $domain;
+                $decoyReply = $checker->checkRecipients($decoy);
+                $decoyCode  = substr(trim($decoyReply), 0, 3);
+
+                $domainCheckCount[$smtpHost] = $count + 1;
+                $domainLastCheck[$smtpHost]  = time();
+
+                if ($decoyCode === '250') {
+                    EmailServer::firstOrCreate(
+                        ['smtpServer' => $smtpHost],
+                        ['validationStatus' => 'AcceptAll']
+                    );
+
+                    if ($this->isMicrosoftDomain($smtpHost)) {
+                        $result = $this->microsoftCheck($email);
+                    } elseif ($this->isYahooDomain($smtpHost)) {
+                        $result = $this->yahooCheck($email);
+                    } else {
+                        $result = ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
+                    }
+                } else {
+                    EmailServer::firstOrCreate(
+                        ['smtpServer' => $smtpHost],
+                        ['validationStatus' => 'Validable']
+                    );
+
+                    if ($this->isMicrosoftDomain($smtpHost)) {
+                        $result = $this->microsoftCheck($email);
+                    } elseif ($this->isYahooDomain($smtpHost)) {
+                        $result = $this->yahooCheck($email);
+                    } else {
+                        $result = $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
                     }
                 }
 
@@ -185,7 +206,7 @@ class ProcessBulkValidation implements ShouldQueue
                 foreach ($retryQueue as $item) {
                     $result = $this->smtpCheck($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
 
-                    // ── Still failing after retry → Accept All ─
+                    // ── Still failing after retry → Accept All ──
                     if ($result['status'] === 'Retry') {
                         $result = ['status' => 'Accept All', 'detail' => 'Temporarily unconfirmable — treated as Accept All'];
                     }
@@ -343,25 +364,20 @@ class ProcessBulkValidation implements ShouldQueue
     }
 
     // ── Real SMTP check ───────────────────────────────────
-private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
-{
-    $start   = microtime(true);
-    $checker = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
-    $reply   = $checker->checkRecipients($email);
-    $elapsed = round(microtime(true) - $start, 2);
+    private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
+    {
+        $checker   = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
+        $reply     = $checker->checkRecipients($email);
+        $replyCode = substr(trim($reply), 0, 3);
 
-    \Illuminate\Support\Facades\Log::info("SMTP [{$elapsed}s] {$email} via {$smtpHost}: " . substr($reply, 0, 60));
+        if ($replyCode === '250') {
+            return ['status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
+        }
 
-    $replyCode = substr(trim($reply), 0, 3);
+        if (in_array($replyCode, ['421', '450', '451', '452'])) {
+            return ['status' => 'Retry', 'detail' => 'Temporary server issue (' . $replyCode . ')'];
+        }
 
-    if ($replyCode === '250') {
-        return ['status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
+        return ['status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
     }
-
-    if (in_array($replyCode, ['421', '450', '451', '452'])) {
-        return ['status' => 'Retry', 'detail' => 'Temporary server issue (' . $replyCode . ')'];
-    }
-
-    return ['status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
-}
 }

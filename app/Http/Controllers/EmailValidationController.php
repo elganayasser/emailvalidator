@@ -229,13 +229,13 @@ class EmailValidationController extends Controller
     private function verifyEmail(string $email): array
     {
         $smtpPort    = 25;
-        $fromAddress = 'verifymyemailemaily@gmail.com';
+        $fromAddress = 'verify@wizemailchecker.com';
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Invalid format'];
         }
 
-        // ── Disposable email check ────────────────────────────
+        // ── Disposable email check ────────────────────────
         $disposableFilter = new DisposableEmailFilter();
         if ($disposableFilter->isDisposableEmailAddress($email)) {
             return ['email' => $email, 'status' => 'Non Valid', 'detail' => 'Disposable email address not allowed'];
@@ -251,7 +251,7 @@ class EmailValidationController extends Controller
         usort($mxRecords, fn($a, $b) => $a['pri'] <=> $b['pri']);
         $smtpHost = $mxRecords[0]['target'];
 
-        // ── Step 1: Check domain cache ────────────────────
+        // ── Step 1: Cache hit ─────────────────────────────
         $cached = EmailServer::where('smtpServer', $smtpHost)->first();
 
         if ($cached) {
@@ -264,7 +264,15 @@ class EmailValidationController extends Controller
                 }
                 return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
             }
+
             if ($cached->validationStatus === 'Validable') {
+                // ── Always check Microsoft/Yahoo even on Validable cache ──
+                if ($this->isMicrosoftDomain($smtpHost)) {
+                    return $this->microsoftCheck($email);
+                }
+                if ($this->isYahooDomain($smtpHost)) {
+                    return $this->yahooCheck($email);
+                }
                 return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
             }
         }
@@ -289,12 +297,18 @@ class EmailValidationController extends Controller
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
-        // ── Step 3: Validable domain — save & real check ──
+        // ── Step 3: Validable domain ──────────────────────
         EmailServer::firstOrCreate(
             ['smtpServer' => $smtpHost],
             ['validationStatus' => 'Validable']
         );
 
+        if ($this->isMicrosoftDomain($smtpHost)) {
+            return $this->microsoftCheck($email);
+        }
+        if ($this->isYahooDomain($smtpHost)) {
+            return $this->yahooCheck($email);
+        }
         return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
     }
 
@@ -442,7 +456,6 @@ class EmailValidationController extends Controller
             return ['email' => $email, 'status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
         }
 
-          // ── Temporary failures — server busy, not invalid ──
         if (in_array($replyCode, ['421', '450', '451', '452'])) {
             return ['email' => $email, 'status' => 'Unverifiable', 'detail' => 'Temporary server issue - retry later (' . $replyCode . ')'];
         }
