@@ -46,8 +46,8 @@ class EmailChecker
                 $this->sendCommand($smtp_server, 'EHLO ' . self::EHLO_DOMAIN);
             }
 
-            // MAIL FROM — our domain, RFC compliant, matches PTR
-            $this->sendCommand($smtp_server, 'MAIL FROM: <verify@wizemailchecker.com>');
+            // MAIL FROM — using Gmail until wizemailchecker.com domain matures
+            $this->sendCommand($smtp_server, 'MAIL FROM: <verifymyemailemaily@gmail.com>');
 
             // RCPT TO — the key verification step
             $rcptResponse = $this->sendCommand($smtp_server, 'RCPT TO: <' . $recipientAddress . '>');

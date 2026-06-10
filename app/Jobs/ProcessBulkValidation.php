@@ -47,12 +47,12 @@ class ProcessBulkValidation implements ShouldQueue
             $outputCsv->insertOne(['Email', 'Deliverability', 'Detail']);
 
             $smtpPort    = 25;
-            $fromAddress = 'verify@wizemailchecker.com';
+            $fromAddress = 'verifymyemailemaily@gmail.com';
             $processed   = 0;
             $retryQueue  = [];
 
             // ── Step 1: Pre-screen and bucket emails by MX host ───
-            $emailBuckets = []; // [smtpHost => [['email' => ..., 'record' => ...], ...]]
+            $emailBuckets = [];
 
             foreach ($csv->getRecords() as $index => $record) {
                 if ($index === 0) continue;
@@ -91,42 +91,36 @@ class ProcessBulkValidation implements ShouldQueue
                 usort($mxRecords, fn($a, $b) => $a['pri'] <=> $b['pri']);
                 $smtpHost = $mxRecords[0]['target'];
 
-                // ── Add to bucket ─────────────────────────────────
                 $emailBuckets[$smtpHost][] = ['email' => $email, 'record' => $record];
             }
 
-            // ── Step 2: Round-robin process buckets, 3 at a time ─
+            // ── Step 2: Round-robin main pass, 3 at a time ────────
             $chunkSize = 3;
 
             while (!empty($emailBuckets)) {
                 foreach ($emailBuckets as $smtpHost => &$bucket) {
 
-                    // Take up to 3 emails from this bucket
                     $chunk = array_splice($bucket, 0, $chunkSize);
 
-                    // Process each email in the chunk
                     foreach ($chunk as $item) {
                         $email  = $item['email'];
                         $result = $this->processEmail($email, $smtpHost, $smtpPort, $fromAddress);
 
                         if ($result['status'] === 'Retry') {
+                            // ── Do NOT count as processed yet ────────
                             $retryQueue[] = ['email' => $email, 'smtpHost' => $smtpHost];
                         } else {
                             $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
+                            $processed++;
+                            $validationJob->update(['processed_emails' => $processed]);
                         }
-
-                        $processed++;
-                        $validationJob->update(['processed_emails' => $processed]);
                     }
 
-                    // Remove bucket if empty
                     if (empty($bucket)) {
                         unset($emailBuckets[$smtpHost]);
                     }
 
-                    // ── Smart sleep: only when this is the last bucket ──
-                    // More than 1 bucket → rotation is our throttle, no sleep needed.
-                    // Only 1 bucket left with items → must self-throttle.
+                    // ── Self-throttle only when last bucket standing ──
                     if (count($emailBuckets) === 1 && !empty($emailBuckets)) {
                         sleep(20);
                     }
@@ -135,21 +129,49 @@ class ProcessBulkValidation implements ShouldQueue
                 unset($bucket);
             }
 
-            // ── Step 3: Retry pass — wait 300s then retry temp failures ──
+            // ── Step 3: Retry pass — bucket + round-robin ─────────
             if (!empty($retryQueue)) {
-                sleep(300);
 
+                // Scale sleep: min 60s, max 300s based on retry count
+                $retrySleep = min(300, max(60, count($retryQueue) * 30));
+                sleep($retrySleep);
+
+                // ── Re-bucket retries by MX host ──────────────────
+                $retryBuckets = [];
                 foreach ($retryQueue as $item) {
-                    $result = $this->processEmail($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
+                    $retryBuckets[$item['smtpHost']][] = $item;
+                }
 
-                    // Still failing after retry → Accept All
-                    if ($result['status'] === 'Retry') {
-                        $result = ['status' => 'Accept All', 'detail' => 'Temporarily unconfirmable — treated as Accept All'];
+                // ── Round-robin retry, 2 at a time (more conservative) ──
+                while (!empty($retryBuckets)) {
+                    foreach ($retryBuckets as $smtpHost => &$bucket) {
+
+                        $chunk = array_splice($bucket, 0, 2);
+
+                        foreach ($chunk as $item) {
+                            $result = $this->processEmail($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
+
+                            // ── Still failing after retry → Unverifiable ──
+                            if ($result['status'] === 'Retry') {
+                                $result = ['status' => 'Unverifiable', 'detail' => 'Could not connect after retry — manually verify'];
+                            }
+
+                            $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
+                            $processed++;
+                            $validationJob->update(['processed_emails' => $processed]);
+                        }
+
+                        if (empty($bucket)) {
+                            unset($retryBuckets[$smtpHost]);
+                        }
+
+                        // ── Self-throttle when last retry bucket standing ──
+                        if (count($retryBuckets) === 1 && !empty($retryBuckets)) {
+                            sleep(20);
+                        }
                     }
 
-                    $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
-                    $processed++;
-                    $validationJob->update(['processed_emails' => $processed]);
+                    unset($bucket);
                 }
             }
 
