@@ -343,21 +343,25 @@ class ProcessBulkValidation implements ShouldQueue
     }
 
     // ── Real SMTP check ───────────────────────────────────
-    private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
-    {
-        $checker   = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
-        $reply     = $checker->checkRecipients($email);
-        $replyCode = substr(trim($reply), 0, 3);
+private function smtpCheck(string $email, string $smtpHost, int $smtpPort, string $fromAddress): array
+{
+    $start   = microtime(true);
+    $checker = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
+    $reply   = $checker->checkRecipients($email);
+    $elapsed = round(microtime(true) - $start, 2);
 
-        if ($replyCode === '250') {
-            return ['status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
-        }
+    \Illuminate\Support\Facades\Log::info("SMTP [{$elapsed}s] {$email} via {$smtpHost}: " . substr($reply, 0, 60));
 
-        // ── Temporary failures — queue for retry, not invalid ──
-        if (in_array($replyCode, ['421', '450', '451', '452'])) {
-            return ['status' => 'Retry', 'detail' => 'Temporary server issue (' . $replyCode . ')'];
-        }
+    $replyCode = substr(trim($reply), 0, 3);
 
-        return ['status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
+    if ($replyCode === '250') {
+        return ['status' => 'Valid', 'detail' => 'SMTP confirmed reachable'];
     }
+
+    if (in_array($replyCode, ['421', '450', '451', '452'])) {
+        return ['status' => 'Retry', 'detail' => 'Temporary server issue (' . $replyCode . ')'];
+    }
+
+    return ['status' => 'Non Valid', 'detail' => 'SMTP rejected (' . $replyCode . ') - ' . substr($reply, 0, 100)];
+}
 }
