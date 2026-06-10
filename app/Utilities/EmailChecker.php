@@ -10,7 +10,7 @@ class EmailChecker
     protected $fromAddress;
     protected $responseTimeout;
 
-    public function __construct($smtpHost, $smtpPort, $fromAddress, $responseTimeout = 10)
+    public function __construct($smtpHost, $smtpPort, $fromAddress, $responseTimeout = 30)
     {
         $this->smtpHost        = $smtpHost;
         $this->smtpPort        = $smtpPort;
@@ -20,7 +20,7 @@ class EmailChecker
 
     public function checkRecipients($recipientAddress)
     {
-        $timeout = 30;
+        $timeout = 20;
 
         try {
 
