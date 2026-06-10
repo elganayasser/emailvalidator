@@ -9,7 +9,10 @@ class Kernel extends ConsoleKernel
 {
     protected $commands = [];
 
-    protected function schedule(Schedule $schedule) {}
+    protected function schedule(Schedule $schedule)
+    {
+        $schedule->command('jobs:cleanup')->everyThirtyMinutes();
+    }
 
     protected function commands()
     {
