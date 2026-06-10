@@ -96,7 +96,7 @@ class ProcessBulkValidation implements ShouldQueue
                 $count    = $domainCheckCount[$smtpHost] ?? 0;
                 $lastTime = $domainLastCheck[$smtpHost] ?? 0;
 
-                if ($count > 0 && $count % 5 === 0) {
+                if ($count > 0 && $count % 10 === 0) {
                     $elapsed = time() - $lastTime;
                     if ($elapsed < 60) {
                         sleep(60 - $elapsed); // only sleep remaining seconds
