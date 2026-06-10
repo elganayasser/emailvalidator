@@ -24,7 +24,7 @@ class EmailChecker
 
         try {
 
-           $smtp_server = fsockopen('tcp4://' . $this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
+           $smtp_server = fsockopen($this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
 
             if (!$smtp_server) {
                 return "Connection failed: $errstr ($errno)";
