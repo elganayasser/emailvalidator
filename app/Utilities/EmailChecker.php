@@ -12,7 +12,7 @@ class EmailChecker
     protected $fromAddress;
     protected $responseTimeout;
 
-    public function __construct($smtpHost, $smtpPort, $fromAddress, $responseTimeout = 30)
+    public function __construct($smtpHost, $smtpPort, $fromAddress, $responseTimeout = 12)
     {
         $this->smtpHost        = $smtpHost;
         $this->smtpPort        = $smtpPort;
@@ -22,7 +22,7 @@ class EmailChecker
 
     public function checkRecipients($recipientAddress)
     {
-        $timeout = 30;
+        $timeout = 12;
 
         try {
             $smtp_server = fsockopen($this->smtpHost, $this->smtpPort, $errno, $errstr, $timeout);
@@ -46,8 +46,8 @@ class EmailChecker
                 $this->sendCommand($smtp_server, 'EHLO ' . self::EHLO_DOMAIN);
             }
 
-            // MAIL FROM — using Gmail until wizemailchecker.com domain matures
-            $this->sendCommand($smtp_server, 'MAIL FROM: <verifymyemailemaily@gmail.com>');
+            // MAIL FROM — wizemailchecker.com now has SPF, DMARC, MX in place
+            $this->sendCommand($smtp_server, 'MAIL FROM: <verify@wizemailchecker.com>');
 
             // RCPT TO — the key verification step
             $rcptResponse = $this->sendCommand($smtp_server, 'RCPT TO: <' . $recipientAddress . '>');

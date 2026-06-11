@@ -36,18 +36,23 @@ class ProcessBulkValidation implements ShouldQueue
         $validationJob->update(['status' => 'processing']);
 
         try {
-            $csv        = Reader::createFromPath($this->csvPath);
-            $outputPath = storage_path('app/public/csv/result_' . $this->jobId . '.csv');
+            $csv               = Reader::createFromPath($this->csvPath);
+            $outputPath        = storage_path('app/public/csv/result_' . $this->jobId . '.csv');
+            $unverifiablePath  = storage_path('app/public/csv/unverifiable_' . $this->jobId . '.csv');
 
             if (!file_exists(dirname($outputPath))) {
                 mkdir(dirname($outputPath), 0775, true);
             }
 
+            // ── Main results CSV ──────────────────────────────────
             $outputCsv = Writer::createFromPath($outputPath, 'w+');
             $outputCsv->insertOne(['Email', 'Deliverability', 'Detail']);
 
+            // ── Unverifiable CSV — emails only, no header ─────────
+            $unverifiableCsv = Writer::createFromPath($unverifiablePath, 'w+');
+
             $smtpPort    = 25;
-            $fromAddress = 'verifymyemailemaily@gmail.com';
+            $fromAddress = 'verify@wizemailchecker.com';
             $processed   = 0;
             $retryQueue  = [];
 
@@ -142,7 +147,7 @@ class ProcessBulkValidation implements ShouldQueue
                     $retryBuckets[$item['smtpHost']][] = $item;
                 }
 
-                // ── Round-robin retry, 2 at a time (more conservative) ──
+                // ── Round-robin retry, 2 at a time ────────────────
                 while (!empty($retryBuckets)) {
                     foreach ($retryBuckets as $smtpHost => &$bucket) {
 
@@ -151,12 +156,13 @@ class ProcessBulkValidation implements ShouldQueue
                         foreach ($chunk as $item) {
                             $result = $this->processEmail($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
 
-                            // ── Still failing after retry → Unverifiable ──
                             if ($result['status'] === 'Retry') {
-                                $result = ['status' => 'Unverifiable', 'detail' => 'Could not connect after retry — manually verify'];
+                                // ── Still failing → write to unverifiable file only ──
+                                $unverifiableCsv->insertOne([$item['email']]);
+                            } else {
+                                $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
                             }
 
-                            $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
                             $processed++;
                             $validationJob->update(['processed_emails' => $processed]);
                         }
@@ -175,10 +181,18 @@ class ProcessBulkValidation implements ShouldQueue
                 }
             }
 
-            $validationJob->update([
+            // ── Step 4: Save results ──────────────────────────────
+            $updateData = [
                 'status'      => 'completed',
                 'result_file' => 'csv/result_' . $this->jobId . '.csv',
-            ]);
+            ];
+
+            // Only save unverifiable path if file has content
+            if (file_exists($unverifiablePath) && filesize($unverifiablePath) > 0) {
+                $updateData['unverifiable_file'] = 'csv/unverifiable_' . $this->jobId . '.csv';
+            }
+
+            $validationJob->update($updateData);
 
         } catch (\Exception $e) {
             $validationJob->update([
@@ -324,7 +338,6 @@ class ProcessBulkValidation implements ShouldQueue
         try {
             $cookieFile = tempnam(sys_get_temp_dir(), 'yahoo_cookie_');
 
-            // ── Step 1: Get session tokens ─────────────────────
             $ch = curl_init('https://login.yahoo.com/');
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
@@ -337,7 +350,6 @@ class ProcessBulkValidation implements ShouldQueue
             $html = curl_exec($ch);
             curl_close($ch);
 
-            // ── Step 2: Extract tokens ──────────────────────────
             preg_match('/acrumb[^,]*?([A-Za-z0-9+\/=]{8})/', $html, $acrumbMatch);
             preg_match('/crumb\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $crumbMatch);
             preg_match('/sessionIndex\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $sessionMatch);
@@ -350,7 +362,6 @@ class ProcessBulkValidation implements ShouldQueue
                 return ['status' => 'Accept All', 'detail' => 'Yahoo session extraction failed'];
             }
 
-            // ── Step 3: Validate email ──────────────────────────
             $ch = curl_init('https://login.yahoo.com/validate');
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);

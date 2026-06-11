@@ -195,6 +195,11 @@ class EmailValidationController extends Controller
 
         if ($job->status === 'completed') {
             $response['download_url'] = url('api/job/' . $jobId . '/download');
+
+            // ── Include unverifiable download link if file exists ──
+            if ($job->unverifiable_file) {
+                $response['unverifiable_url'] = url('api/job/' . $jobId . '/unverifiable');
+            }
         }
 
         if ($job->status === 'failed') {
@@ -204,7 +209,7 @@ class EmailValidationController extends Controller
         return response()->json($response);
     }
 
-    // ── API: download result CSV ──────────────────────────
+    // ── API: download main result CSV ─────────────────────
     public function jobDownload(string $jobId)
     {
         $job = ValidationJob::where('job_id', $jobId)->first();
@@ -222,6 +227,31 @@ class EmailValidationController extends Controller
         return response()->download($filePath, 'validated_emails_' . $jobId . '.csv', [
             'Content-Type'        => 'text/csv',
             'Content-Disposition' => 'attachment; filename="validated_emails_' . $jobId . '.csv"',
+        ]);
+    }
+
+    // ── API: download unverifiable CSV ────────────────────
+    public function jobUnverifiable(string $jobId)
+    {
+        $job = ValidationJob::where('job_id', $jobId)->first();
+
+        if (!$job || $job->status !== 'completed') {
+            return response()->json(['error' => 'Result not ready'], 404);
+        }
+
+        if (!$job->unverifiable_file) {
+            return response()->json(['error' => 'No unverifiable emails for this job'], 404);
+        }
+
+        $filePath = storage_path('app/public/' . $job->unverifiable_file);
+
+        if (!file_exists($filePath)) {
+            return response()->json(['error' => 'Unverifiable file not found'], 404);
+        }
+
+        return response()->download($filePath, 'unverifiable_' . $jobId . '.csv', [
+            'Content-Type'        => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="unverifiable_' . $jobId . '.csv"',
         ]);
     }
 
@@ -256,28 +286,19 @@ class EmailValidationController extends Controller
 
         if ($cached) {
             if ($cached->validationStatus === 'AcceptAll') {
-                if ($this->isMicrosoftDomain($smtpHost)) {
-                    return $this->microsoftCheck($email);
-                }
-                if ($this->isYahooDomain($smtpHost)) {
-                    return $this->yahooCheck($email);
-                }
+                if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+                if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
                 return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
             }
 
             if ($cached->validationStatus === 'Validable') {
-                // ── Always check Microsoft/Yahoo even on Validable cache ──
-                if ($this->isMicrosoftDomain($smtpHost)) {
-                    return $this->microsoftCheck($email);
-                }
-                if ($this->isYahooDomain($smtpHost)) {
-                    return $this->yahooCheck($email);
-                }
+                if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+                if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
                 return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
             }
         }
 
-        // ── Step 2: Unknown domain — run decoy check ──────
+        // ── Step 2: Unknown domain — decoy check ──────────
         $checker    = new EmailChecker($smtpHost, $smtpPort, $fromAddress);
         $decoy      = 'xn0texist99zz@' . $domain;
         $decoyReply = $checker->checkRecipients($decoy);
@@ -288,27 +309,19 @@ class EmailValidationController extends Controller
                 ['smtpServer' => $smtpHost],
                 ['validationStatus' => 'AcceptAll']
             );
-            if ($this->isMicrosoftDomain($smtpHost)) {
-                return $this->microsoftCheck($email);
-            }
-            if ($this->isYahooDomain($smtpHost)) {
-                return $this->yahooCheck($email);
-            }
+            if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+            if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
             return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
-        // ── Step 3: Validable domain ──────────────────────
+        // ── Step 3: Validable ─────────────────────────────
         EmailServer::firstOrCreate(
             ['smtpServer' => $smtpHost],
             ['validationStatus' => 'Validable']
         );
 
-        if ($this->isMicrosoftDomain($smtpHost)) {
-            return $this->microsoftCheck($email);
-        }
-        if ($this->isYahooDomain($smtpHost)) {
-            return $this->yahooCheck($email);
-        }
+        if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+        if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
         return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
     }
 
@@ -378,7 +391,6 @@ class EmailValidationController extends Controller
         try {
             $cookieFile = tempnam(sys_get_temp_dir(), 'yahoo_cookie_');
 
-            // ── Step 1: Get session tokens ─────────────
             $ch = curl_init('https://login.yahoo.com/');
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
@@ -391,7 +403,6 @@ class EmailValidationController extends Controller
             $html = curl_exec($ch);
             curl_close($ch);
 
-            // ── Step 2: Extract tokens ─────────────────
             preg_match('/acrumb[^,]*?([A-Za-z0-9+\/=]{8})/', $html, $acrumbMatch);
             preg_match('/crumb\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $crumbMatch);
             preg_match('/sessionIndex\\\\\":\\\\\"([^\\\\]+)\\\\\"/', $html, $sessionMatch);
@@ -404,7 +415,6 @@ class EmailValidationController extends Controller
                 return ['email' => $email, 'status' => 'Accept All', 'detail' => 'Yahoo session extraction failed'];
             }
 
-            // ── Step 3: Validate email ─────────────────
             $ch = curl_init('https://login.yahoo.com/validate');
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);
