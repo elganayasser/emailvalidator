@@ -24,9 +24,6 @@ class ProcessBulkValidation implements ShouldQueue
     private string $jobId;
     private string $csvPath;
 
-    // ── Per-job API call counters (reset each round per provider) ──
-    private array $apiCallCount = ['microsoft' => 0, 'yahoo' => 0];
-
     public function __construct(string $jobId, string $csvPath)
     {
         $this->jobId   = $jobId;
@@ -39,9 +36,9 @@ class ProcessBulkValidation implements ShouldQueue
         $validationJob->update(['status' => 'processing']);
 
         try {
-            $csv               = Reader::createFromPath($this->csvPath);
-            $outputPath        = storage_path('app/public/csv/result_' . $this->jobId . '.csv');
-            $unverifiablePath  = storage_path('app/public/csv/unverifiable_' . $this->jobId . '.csv');
+            $csv              = Reader::createFromPath($this->csvPath);
+            $outputPath       = storage_path('app/public/csv/result_' . $this->jobId . '.csv');
+            $unverifiablePath = storage_path('app/public/csv/unverifiable_' . $this->jobId . '.csv');
 
             if (!file_exists(dirname($outputPath))) {
                 mkdir(dirname($outputPath), 0775, true);
@@ -66,7 +63,6 @@ class ProcessBulkValidation implements ShouldQueue
                 $email = isset($record[0]) ? trim($record[0]) : null;
                 if (!$email) continue;
 
-                // ── Invalid format ────────────────────────────────
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Invalid email format']);
                     $processed++;
@@ -74,7 +70,6 @@ class ProcessBulkValidation implements ShouldQueue
                     continue;
                 }
 
-                // ── Disposable check ──────────────────────────────
                 $disposableFilter = new DisposableEmailFilter();
                 if ($disposableFilter->isDisposableEmailAddress($email)) {
                     $outputCsv->insertOne([$email, 'Non Valid', 'Disposable email address not allowed']);
@@ -83,7 +78,6 @@ class ProcessBulkValidation implements ShouldQueue
                     continue;
                 }
 
-                // ── MX lookup ─────────────────────────────────────
                 [, $domain] = explode('@', $email, 2);
                 $mxRecords  = dns_get_record($domain, DNS_MX);
 
@@ -101,26 +95,19 @@ class ProcessBulkValidation implements ShouldQueue
             }
 
             // ── Step 2: Round-robin main pass, 3 at a time ────────
-            $chunkSize = 3;
-
+            // Round-robin naturally limits consecutive hits per MX.
+            // For AcceptAll Microsoft/Yahoo → API (trusted to round-robin spacing).
+            // For Validable → SMTP always.
             while (!empty($emailBuckets)) {
-                // ── Reset API counters at start of each round ─────
-                $this->apiCallCount = ['microsoft' => 0, 'yahoo' => 0];
-
-                $parkedThisRound = []; // emails parked due to API threshold
-
                 foreach ($emailBuckets as $smtpHost => &$bucket) {
 
-                    $chunk = array_splice($bucket, 0, $chunkSize);
+                    $chunk = array_splice($bucket, 0, 3);
 
                     foreach ($chunk as $item) {
                         $email  = $item['email'];
                         $result = $this->processEmail($email, $smtpHost, $smtpPort, $fromAddress);
 
-                        if ($result['status'] === 'Parked') {
-                            // ── API threshold reached — park for next round ──
-                            $parkedThisRound[$smtpHost][] = $item;
-                        } elseif ($result['status'] === 'Retry') {
+                        if ($result['status'] === 'Retry') {
                             $retryQueue[] = ['email' => $email, 'smtpHost' => $smtpHost];
                         } else {
                             $outputCsv->insertOne([$email, $result['status'], $result['detail']]);
@@ -140,13 +127,6 @@ class ProcessBulkValidation implements ShouldQueue
                 }
 
                 unset($bucket);
-
-                // ── Put parked emails back into buckets for next round ──
-                foreach ($parkedThisRound as $smtpHost => $items) {
-                    foreach ($items as $item) {
-                        $emailBuckets[$smtpHost][] = $item;
-                    }
-                }
             }
 
             // ── Step 3: Retry pass — bucket + round-robin ─────────
@@ -160,12 +140,7 @@ class ProcessBulkValidation implements ShouldQueue
                     $retryBuckets[$item['smtpHost']][] = $item;
                 }
 
-                // ── Reset API counters for retry pass ─────────────
-                $this->apiCallCount = ['microsoft' => 0, 'yahoo' => 0];
-
                 while (!empty($retryBuckets)) {
-                    $this->apiCallCount = ['microsoft' => 0, 'yahoo' => 0];
-
                     foreach ($retryBuckets as $smtpHost => &$bucket) {
 
                         $chunk = array_splice($bucket, 0, 2);
@@ -173,8 +148,7 @@ class ProcessBulkValidation implements ShouldQueue
                         foreach ($chunk as $item) {
                             $result = $this->processEmail($item['email'], $item['smtpHost'], $smtpPort, $fromAddress);
 
-                            if ($result['status'] === 'Retry' || $result['status'] === 'Parked') {
-                                // ── Still failing after retry → unverifiable ──
+                            if ($result['status'] === 'Retry') {
                                 $unverifiableCsv->insertOne([$item['email']]);
                             } else {
                                 $outputCsv->insertOne([$item['email'], $result['status'], $result['detail']]);
@@ -224,29 +198,14 @@ class ProcessBulkValidation implements ShouldQueue
 
         // ── Cache hit: AcceptAll ──────────────────────────────────
         if ($cached && $cached->validationStatus === 'AcceptAll') {
-            if ($this->isMicrosoftDomain($smtpHost)) {
-                // ── Check API counter ─────────────────────────────
-                if ($this->apiCallCount['microsoft'] < 3) {
-                    $this->apiCallCount['microsoft']++;
-                    return $this->microsoftCheck($email);
-                }
-                // ── Threshold reached — park for next round ───────
-                return ['status' => 'Parked', 'detail' => ''];
-            }
-
-            if ($this->isYahooDomain($smtpHost)) {
-                if ($this->apiCallCount['yahoo'] < 3) {
-                    $this->apiCallCount['yahoo']++;
-                    return $this->yahooCheck($email);
-                }
-                return ['status' => 'Parked', 'detail' => ''];
-            }
-
-            // ── Other AcceptAll — return directly, no API needed ──
+            // ── Microsoft/Yahoo AcceptAll → API ───────────────────
+            // Round-robin (3 per bucket) naturally spaces API calls.
+            if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+            if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
             return ['status' => 'Accept All', 'detail' => 'Cached: domain accepts all addresses'];
         }
 
-        // ── Cache hit: Validable — always SMTP ───────────────────
+        // ── Cache hit: Validable → SMTP always ───────────────────
         if ($cached && $cached->validationStatus === 'Validable') {
             return $this->smtpCheck($email, $smtpHost, $smtpPort, $fromAddress);
         }
@@ -263,23 +222,8 @@ class ProcessBulkValidation implements ShouldQueue
                 ['smtpServer' => $smtpHost],
                 ['validationStatus' => 'AcceptAll']
             );
-
-            if ($this->isMicrosoftDomain($smtpHost)) {
-                if ($this->apiCallCount['microsoft'] < 3) {
-                    $this->apiCallCount['microsoft']++;
-                    return $this->microsoftCheck($email);
-                }
-                return ['status' => 'Parked', 'detail' => ''];
-            }
-
-            if ($this->isYahooDomain($smtpHost)) {
-                if ($this->apiCallCount['yahoo'] < 3) {
-                    $this->apiCallCount['yahoo']++;
-                    return $this->yahooCheck($email);
-                }
-                return ['status' => 'Parked', 'detail' => ''];
-            }
-
+            if ($this->isMicrosoftDomain($smtpHost)) return $this->microsoftCheck($email);
+            if ($this->isYahooDomain($smtpHost))     return $this->yahooCheck($email);
             return ['status' => 'Accept All', 'detail' => 'Server accepts all addresses'];
         }
 
